@@ -10,13 +10,7 @@ date: 04/23/2015
 	<head>
 		<meta charset="utf-8">
 		<link href="css/style.css" rel="stylesheet">
-		<link href="css/sweetalert.css" rel="stylesheet" type="text/css" >
-		<script src="lib/jquery-1.11.2.min.js"></script>
-		<script src="lib/sweetalert.min.js"></script>
 		<script src="lib/three.min.js"></script>
-		<script src="lib/dat.gui.min.js"></script>
-		<script src="js/gui.js"></script>
-		<script src="js/demoConfig.js"></script>
 		<script src="js/threejs/VREffect.js"></script>
 		<script src="js/threejs/DeviceOrientationControls.js"></script>
 		<title>Web VR Demo - Mobile</title>		
@@ -55,13 +49,17 @@ date: 04/23/2015
 				mesh = new THREE.Mesh(geometry, material);
 				scene.add(mesh);
 
-				renderer = new THREE.WebGLRenderer();
+				var attributes = {
+					stencil: false
+				};
+       
+          		renderer = new THREE.WebGLRenderer( attributes );
 				// In order to support v.69, I comment this line. When we are ready to v.71, we can enable it. 
 				//renderer.setPixelRatio(window.devicePixelRatio);
 
 				renderer.setSize(window.innerWidth, window.innerHeight);
 
-				vrDeviceEffect = new THREE.VREffect(renderer);
+				vrDeviceEffect = new THREE.VREffect( renderer );
 
 				window.addEventListener( 'resize', onWindowResize, false );
 
@@ -89,21 +87,18 @@ date: 04/23/2015
 
 			function vrDeviceCallback(devices) {
 
-				if (devices.length) {
-					swal({ title: "VR device connected!",   text: "I will close in 3 seconds.",  
-					type: "success", timer: 3000, showConfirmButton: false });
-				} else {
+				if ( !devices.length ) {
 					return;
 				}
 
-				for (var i = 0; i < devices.length; ++i) {
+				for ( var i = 0; i < devices.length; ++i ) {
 
-					if (devices[i] instanceof HMDVRDevice) {
+					if ( devices[i] instanceof HMDVRDevice ) {
 						vrHMD = devices[i];
 					}	
 
-					if (vrHMD && devices[i] instanceof PositionSensorVRDevice
-						&& devices[i].hardwareUnitId == vrHMD.hardwareUnitId) {
+					if ( vrHMD && devices[i] instanceof PositionSensorVRDevice
+						&& devices[i].hardwareUnitId == vrHMD.hardwareUnitId ) {
 						vrPosSensor = devices[i];
 						// We just want to get the first VR device.
 						break;
