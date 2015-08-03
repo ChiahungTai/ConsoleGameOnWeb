@@ -9,6 +9,7 @@ date: 04/23/2015
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
 		<link href="css/style.css" rel="stylesheet">
 		<script src="lib/three.min.js"></script>
 		<script src="js/threejs/VREffect.js"></script>
@@ -25,6 +26,7 @@ date: 04/23/2015
 			var vrHMD, vrPosSensor;
 			var vrDeviceEffect;
 			var control;
+			var bCardboard = false;
 
 			init();
 
@@ -53,16 +55,14 @@ date: 04/23/2015
 					stencil: false
 				};
        
-          		renderer = new THREE.WebGLRenderer( attributes );
+				renderer = new THREE.WebGLRenderer( attributes );
 				// In order to support v.69, I comment this line. When we are ready to v.71, we can enable it. 
-				//renderer.setPixelRatio(window.devicePixelRatio);
-
-				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
 
 				vrDeviceEffect = new THREE.VREffect( renderer );
 
 				window.addEventListener( 'resize', onWindowResize, false );
-
 				container.appendChild( renderer.domElement );
 
 				if ( navigator.getVRDevices ) {
@@ -100,6 +100,10 @@ date: 04/23/2015
 					if ( vrHMD && devices[i] instanceof PositionSensorVRDevice
 						&& devices[i].hardwareUnitId == vrHMD.hardwareUnitId ) {
 						vrPosSensor = devices[i];
+
+						if ( vrPosSensor.deviceName.indexOf( 'Cardboard' ) >= 0 ) {
+							bCardboard = true;
+						}
 						// We just want to get the first VR device.
 						break;
 					}
@@ -112,28 +116,51 @@ date: 04/23/2015
 
 				requestAnimationFrame( gameLoop );
 
-				// vrPosSensor is not supported on mobile devices.
-				// if ( vrPosSensor ) {
-				// 	var state = vrPosSensor.getState();
+				// vrPosSensor if has been supported on mobile devices?
+				if ( vrPosSensor ) {
+					var state = vrPosSensor.getState();
 
-				// 	if ( state.hasOrientation ) {
-				// 		// camera.quaternion.set(
-				// 		// 	state.orientation.x, 
-				// 		// 	state.orientation.y, 
-				// 		// 	state.orientation.z, 
-				// 		// 	state.orientation.w);
+					if ( state.hasPosition ) {
 
-				// 		camera.quaternion.set(
-				// 			orientation.x, 
-				// 			orientation.y, 
-				// 			orientation.z, 
-				// 			1.0);
+						//console.log( state.position );
+					}
 
-				// 		//console.log(state.orientation);
-				// 	}
-				// }
+					if ( state.hasOrientation ) {
+			
+						if ( bCardboard ) {
 
-				control.update();
+							var q0 = new THREE.Quaternion( state.orientation.x,
+							state.orientation.z,
+							state.orientation.y,
+							state.orientation.w );
+							var q1 = new THREE.Quaternion( -Math.sqrt( 0.5 ), 0, 0, Math.sqrt( 0.5 ) ); // - PI/2 around the x-axis, camera at right version
+
+							q0.multiply( q1 ); // camera looks out the back of the device, not the top
+							camera.quaternion.set(
+							q0.x, 
+							q0.z,
+							q0.y, 
+							q0.w);
+
+						} else {
+							// Oculus device
+							camera.quaternion.set(
+							state.orientation.x, 
+							state.orientation.y,
+							state.orientation.z, 
+							state.orientation.w);
+						}		
+
+						//console.log(state.orientation);
+					} else {
+
+						control.update(); // For some devices that do not support sensor. 	
+					}
+				} else {
+
+					control.update(); // For some devices that do not support sensor. 	
+				}
+
 				vrDeviceEffect.render( scene, camera );
 			}
 
