@@ -47,3 +47,23 @@ function initPanoramaGUI( config ) {
         config.change( "render mode", value );        
     } ).listen();
 }
+
+var Worker_Params = {
+    "render mode" : 0,
+    "balls" : 500
+};
+
+function initWorkerGUI( config ) {
+     
+    var gui = new dat.GUI();
+    
+    gui.add( Worker_Params, "render mode", { general: 0, VRDevice: 1 } ).onChange( function(value) {
+        
+        config.change( "render mode", value );        
+    } ).listen();
+
+    gui.add( Worker_Params, 'balls', 0, 1500 ).step(100).onChange( function(value) {
+       
+        config.change( "balls", value );
+    } );
+}

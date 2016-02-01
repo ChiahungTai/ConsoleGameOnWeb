@@ -1,0 +1,516 @@
+<!--
+To change this template, choose Tools | Templates
+and open the template in the editor.
+-->
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Ellis's physics three.js demo</title>
+		<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	</head>
+	<body>
+	<canvas id="c" width="640" height="640"></canvas>
+	<style type="text/css">
+		* {
+			margin:0;
+			padding:0;
+		}
+		body {
+			overflow: hidden;
+			font-family: Monospace;
+		}
+	</style>
+		<script src="lib/cannon.min.js"></script>
+		<script src="lib/three.js"></script>
+		<script src="lib/threejs/TrackballControls.js"></script>
+		<script src="lib/stats.min.js"></script>
+		<script src="lib/dat.gui.min.js"></script>
+        <script src="js/gui.js"></script>
+        <script src="js/demoConfig.js"></script>
+		<script type="text/javascript">
+			var size = 1;
+			var dampling = 0.01;
+			var ballMass = 10;
+			var dt = 1/60;
+			var sphereShape;
+			var ballMaterial;
+			var bodies = [];
+			var world;
+			var worker;
+			var controls;
+			var bShowBoundary = false;
+			var canvas, camera;
+			var vrHMD, vrPosSensor;
+			var eyeTranslationL, eyeFOVL;
+			var eyeTranslationR, eyeFOVR;
+			var bFullScreen = false, fKeyCode = 70;
+			var physics_stats = null, render_stats = null;
+			var workerConfig = null;
+			var lastRenderMode = WorkerConfig.GENERAL_MODE;
+			var lastNumOfBalls = 0;	
+			var positions;	
+			var quaternions;
+			var cameraState;
+
+			init();
+			animate();
+
+			function init() {
+
+				world = new CANNON.World();
+				world.broadphase = new CANNON.NaiveBroadphase();
+				world.gravity.set(0,-10,0);
+				world.solver.tolerance = 0.001;
+
+				var stone = new CANNON.Material('stone');
+				var stone_stone = new CANNON.ContactMaterial(stone, stone, {
+				  friction: 0.3,
+				  restitution: 0.2
+				});
+				world.addContactMaterial(stone_stone);
+				cameraState = new Float32Array(7);
+
+				// init stats       
+				physics_stats = new Stats();
+				physics_stats.domElement.style.position = 'absolute';
+				physics_stats.domElement.style.top = '0px';
+				document.body.appendChild( physics_stats.domElement );
+				render_stats = new Stats();
+				render_stats.domElement.style.position = 'absolute';
+				render_stats.domElement.style.top = '50px';
+				document.body.appendChild( render_stats.domElement );
+
+				workerConfig = new WorkerConfig();
+				workerConfig.adjustBall = generateBalls;
+				initWorkerGUI(workerConfig);
+
+				// ground plane
+				groundMaterial = new CANNON.Material();
+				var groundShape = new CANNON.Plane();
+				var groundBody = new CANNON.Body( { mass: 0, material: groundMaterial } );
+				groundBody.addShape(groundShape);
+				groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI/2);
+				groundBody.position.set(0, -20, 0);
+				world.addBody(groundBody);
+
+				// plane -x
+				var planeShapeXmin = new CANNON.Plane();
+				var planeXmin = new CANNON.Body({ mass: 0, material: stone });
+				planeXmin.addShape(planeShapeXmin);
+				planeXmin.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI/2);
+				planeXmin.position.set(-30, 0, 0);
+				world.addBody(planeXmin);
+
+				// Plane +x
+				var planeShapeXmax = new CANNON.Plane();
+				var planeXmax = new CANNON.Body({ mass: 0, material: stone });
+				planeXmax.addShape(planeShapeXmax);
+				planeXmax.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI/2);
+				planeXmax.position.set(30, 0, 0);
+				world.addBody(planeXmax);
+
+				// Plane +y
+				var planeShapeYmax = new CANNON.Plane();
+				var planeYmax = new CANNON.Body({ mass: 0,  material: stone });
+				planeYmax.addShape(planeShapeYmax);
+				planeYmax.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI/2);
+				planeYmax.position.set(0, 40, 0);
+				world.addBody(planeYmax);
+				
+				// Plane -z
+				var planeShapeZmin = new CANNON.Plane();
+				var planeZmin = new CANNON.Body({ mass: 0, material: stone });
+				planeZmin.addShape(planeShapeZmin);
+				planeZmin.position.set(0, 0, -20);
+				world.addBody(planeZmin);
+
+				// Plane +z
+				var planeShapeZmax = new CANNON.Plane();
+				var planeZmax = new CANNON.Body({ mass: 0, material: stone });
+				planeZmax.addShape(planeShapeZmax);
+				planeZmax.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0),-Math.PI);
+				planeZmax.position.set(0, 0, 20);
+				world.addBody(planeZmax);
+
+				// // Shape on plane
+				sphereShape = new CANNON.Sphere(size);
+				ballMaterial = new CANNON.Material();
+
+				// Init camera controller
+				// Controls
+				camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.5, 10000);
+				camera.target = new THREE.Vector3(0, 0, 0);
+				camera.position.set(0, 30, 170);
+	
+				generateBalls(workerConfig.getNumOfBall());
+				// Create contact material behaviour
+				var ballGroundContact = new CANNON.ContactMaterial(groundMaterial, ballMaterial, { friction: 0.3, restitution: 4 });
+				world.addContactMaterial(ballGroundContact);
+
+				var ballballContact = new CANNON.ContactMaterial( ballMaterial, ballMaterial, { friction: 0.0, restitution: 1 } );
+				world.addContactMaterial(ballGroundContact);
+
+				initWorker();
+
+				controls = new THREE.TrackballControls(camera, canvas);
+				controls.rotateSpeed = 1.0;
+				controls.zoomSpeed = 1.2;
+				controls.panSpeed = 0.8;
+				controls.noZoom = false;
+				controls.noPan = false;
+				controls.staticMoving = true;
+				controls.dynamicDampingFactor = 0.3;
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				document.addEventListener( 'keydown', onKeyDown, false);
+
+				if ( navigator.getVRDevices ) {
+					navigator.getVRDevices().then( gotVRDevices );
+				}
+
+				updateWorker();
+			}
+
+			function onKeyDown(event) {
+				var key = event.keyCode || event.which;
+
+				if (key == fKeyCode) {
+					triggerFullscreen();
+				}
+			}
+
+			function triggerFullscreen() {
+
+				bFullScreen = !bFullScreen;
+
+				if ( vrPosSensor && bFullScreen ) {
+
+					if ( vrHMD === undefined ) return;
+					//if ( isFullscreen === boolean ) return;
+
+					if ( canvas.mozRequestFullScreen ) {
+						console.log("triggerFullscreen on main thread");
+						canvas.mozRequestFullScreen( { vrDisplay: vrHMD } );
+
+					} else if ( canvas.webkitRequestFullscreen ) {
+						console.log("triggerFullscreen on main thread");
+						canvas.webkitRequestFullscreen( { vrDisplay: vrHMD } );
+					}
+
+				   return;
+				}
+
+				 // toggle fullscreen
+				if ( !document.fullscreenElement
+					&& !document.mozFullScreenElement 
+					&& !document.webkitFullscreenElement 
+					&& !document.msFullscreenElement ) {  // current working methods
+
+					if ( document.documentElement.requestFullscreen ) {
+						document.documentElement.requestFullscreen();
+					} else if ( document.documentElement.msRequestFullscreen ) {
+						document.documentElement.msRequestFullscreen();
+					} else if ( document.documentElement.mozRequestFullScreen ) {
+						document.documentElement.mozRequestFullScreen();
+					} else if ( document.documentElement.webkitRequestFullscreen ) {
+						document.documentElement.webkitRequestFullscreen( Element.ALLOW_KEYBOARD_INPUT );
+					}
+				} else {
+					if (document.exitFullscreen) {
+					  document.exitFullscreen();
+					} else if (document.msExitFullscreen) {
+					  document.msExitFullscreen();
+					} else if (document.mozCancelFullScreen) {
+					  document.mozCancelFullScreen();
+					} else if (document.webkitExitFullscreen) {
+					  document.webkitExitFullscreen();
+					}
+
+					onWindowResize();
+				}
+			}
+
+			window.addEventListener("load", function() {
+				if (navigator.getVRDevices) {
+					navigator.getVRDevices().then(vrDeviceCallback);
+				} else if (navigator.mozGetVRDevices) {
+					navigator.mozGetVRDevices(vrDeviceCallback);
+				}
+			}, false);
+
+			var isFullscreen = false;
+			var fullscreenchange = canvas.mozRequestFullScreen ? 'mozfullscreenchange' : 'webkitfullscreenchange';
+			document.addEventListener( fullscreenchange, function ( event ) {
+
+				isFullscreen = document.mozFullScreenElement || document.webkitFullscreenElement;
+
+			}, false );
+
+			function gotVRDevices( devices ) {
+
+				for ( var i = 0; i < devices.length; i ++ ) {
+					if ( devices[ i ] instanceof HMDVRDevice ) {
+						vrHMD = devices[ i ];
+
+						if ( vrHMD.getEyeParameters !== undefined ) {
+
+							var eyeParamsL = vrHMD.getEyeParameters( 'left' );
+							var eyeParamsR = vrHMD.getEyeParameters( 'right' );
+
+							eyeTranslationL = eyeParamsL.eyeTranslation;
+							eyeTranslationR = eyeParamsR.eyeTranslation;
+							eyeFOVL = eyeParamsL.recommendedFieldOfView;
+							eyeFOVR = eyeParamsR.recommendedFieldOfView;
+
+						} else {
+							// TODO: This is an older code path and not spec compliant.
+							// It should be removed at some point in the near future.
+							eyeTranslationL = vrHMD.getEyeTranslation( 'left' );
+							eyeTranslationR = vrHMD.getEyeTranslation( 'right' );
+							eyeFOVL = vrHMD.getRecommendedEyeFieldOfView( 'left' );
+							eyeFOVR = vrHMD.getRecommendedEyeFieldOfView( 'right' );
+						}
+						break; // We keep the first we encounter
+					}
+				}
+
+				if ( vrHMD === undefined ) {
+					if ( onError ) onError( 'HMD not available' );
+				}
+
+				worker.postMessage( { 
+					eyeTranslationL: eyeTranslationL.x, 
+					eyeTranslationR: eyeTranslationR.x, 
+					eyeFOVLUp: eyeFOVL.upDegrees, eyeFOVLDown: eyeFOVL.downDegrees, 
+					eyeFOVLLeft: eyeFOVL.leftDegrees, eyeFOVLRight: eyeFOVL.rightDegrees, 
+					eyeFOVRUp: eyeFOVR.upDegrees, eyeFOVRDown: eyeFOVR.downDegrees, 
+					eyeFOVRLeft: eyeFOVR.leftDegrees, eyeFOVRRight: eyeFOVR.rightDegrees });
+			}
+
+			function vrDeviceCallback(devices) {
+
+				if (devices.length) {
+					// swal({ title: "VR device connected!",   text: "I will close in 3 seconds.",  
+					// type: "success", timer: 3000,   showConfirmButton: false });
+				} else {
+					return;
+				}
+
+				for (var i = 0; i < devices.length; ++i) {
+
+					if (devices[i] instanceof HMDVRDevice) {
+					   vrHMD = devices[i];
+					}	
+
+					if (vrHMD && devices[i] instanceof PositionSensorVRDevice
+						&& devices[i].hardwareUnitId == vrHMD.hardwareUnitId) {
+						vrPosSensor = devices[i];
+						console.log("WebVR get vrPosSensor...");
+						// We just want to get the first VR device.
+					   break;
+					}
+				}
+			}
+
+			function initWorker() {
+				canvas = document.getElementById('c');
+				canvas.width = window.innerWidth;
+				canvas.height = window.innerHeight;
+				var proxy = canvas.transferControlToOffscreen();   // new interface added by offscreencanvas.
+
+				if ( window.Worker ) { 
+
+					worker = new Worker("js/gl_worker_three.js");
+					worker.onmessage = function( evt ) {
+						//console.log('Message received from worker ' + evt.data );
+
+						if ( evt.data.positions && evt.data.quaternions
+							&& evt.data.cameraState ) {
+							positions = evt.data.positions;
+							quaternions = evt.data.quaternions;
+							cameraState = evt.data.cameraState;
+
+							updateWorker();
+						}
+
+						render_stats.update();
+					};
+
+					worker.postMessage( { test: 'webgl_offscreen', canvas: proxy, ballNums: lastNumOfBalls, bShowBoundary: bShowBoundary }, [proxy]);
+				}
+			}
+
+			function updateWorker() {
+				cameraState[0] = camera.position.x;
+				cameraState[1] = camera.position.y;
+				cameraState[2] = camera.position.z;
+				cameraState[3] = camera.quaternion.x;
+				cameraState[4] = camera.quaternion.y;
+				cameraState[5] = camera.quaternion.z;
+				cameraState[6] = camera.quaternion.w;
+
+				var lens = bodies.length;
+
+				for ( var i = 0; i < lens; ++i ) {
+					var b = bodies[i];
+					var p = b.position;
+					var q = b.quaternion;
+
+					positions[3 * i + 0] = p.x;
+					positions[3 * i + 1] = p.y;
+					positions[3 * i + 2] = p.z;
+
+					quaternions[4 * i + 0] = q.x;
+					quaternions[4 * i + 1] = q.y;
+					quaternions[4 * i + 2] = q.z;
+					quaternions[4 * i + 3] = q.w; 
+				}
+
+				worker.postMessage( { cameraState: cameraState, positions: positions, quaternions: quaternions }, [cameraState.buffer, positions.buffer, quaternions.buffer]);
+			}
+
+			function animate( timestamp ) {
+				controls.update();
+
+				world.step(dt); // Update the phyics world.
+				updateVR();
+				physics_stats.update();
+
+				// Change render
+				var renderMode = workerConfig.getRenderMode();
+
+				if ( lastRenderMode != renderMode ) {
+					onWindowResize();
+
+					if ( renderMode == WorkerConfig.GENERAL_MODE ) {
+						worker.postMessage( { renderMode: 'GENERAL'} );
+					} else if ( renderMode == WorkerConfig.VRDEVICE_MODE ) {
+						worker.postMessage( { renderMode: 'VR'} );
+					} else {
+						console.error( "Not define this render mode: " + renderMode );
+					}
+
+					lastRenderMode = renderMode;
+				}
+
+				requestAnimationFrame( animate );
+			}
+
+			function updateVR() {
+				// For WebVR sensor
+				if ( vrPosSensor ) {
+				   var state = vrPosSensor.getState();
+
+					if ( state.hasOrientation ) {
+					   camera.quaternion.set(
+							   state.orientation.x, 
+							   state.orientation.y, 
+							   state.orientation.z, 
+							   state.orientation.w);
+					}
+
+					if ( state.hasPosition ) {
+
+					}
+				   
+				}
+			}
+
+			function generateBalls(num) {
+
+				var radius = 1;
+				var size = radius;
+
+				for ( var i = 0; i < lastNumOfBalls; ++i ) {
+					world.remove(bodies[i]);
+				}
+				
+				bodies = [];
+
+				positions = new Float32Array(num*3);	
+			 	quaternions = new Float32Array(num*4);
+
+				for ( var i = 0; i < num; ++i ) {
+
+					var randX = (Math.random() - 0.5) * 20;
+					var randY = (Math.random() - 0.5) * size;
+					var randZ = Math.random() * 20;
+					var ballBody = new CANNON.Body( {
+						mass: ballMass,
+						material: ballMaterial,
+						position: new CANNON.Vec3(randX, randY, randZ)
+					});
+				
+					ballBody.addShape( sphereShape );
+					ballBody.linearDampling = dampling;
+					world.addBody( ballBody );
+					bodies.push( ballBody );
+				}
+
+				if (worker)
+					worker.postMessage( {ballNums: num} );
+				
+				lastNumOfBalls = num;
+			}
+
+			function shootBall() {
+
+				var shootVelo = 15;
+				var ballHeight = 10;
+				var shootDirection = new THREE.Vector3();
+				var projector = new THREE.Projector();
+
+				shootDirection.set( 0,0,1 );
+				camera = demo.getCamera();
+				var mat = new CANNON.Material();
+				projector.unprojectVector(shootDirection, camera);
+				var sphereBody = new CANNON.Body( {
+					mass: ballMass,
+					material: mat,
+					position: new CANNON.Vec3( 3 * size, size, ballHeight )
+				});
+				var mat_mat = new CANNON.ContactMaterial(mat, mat, {
+				  friction: 0.5,
+				  restitution: 5
+				});
+				var mat_ground = new CANNON.ContactMaterial(groundMaterial, mat, { friction: 0.0, restitution: 5 });
+				demo.world.addContactMaterial(mat_ground);
+
+				var ray = new THREE.Ray(camera.position, shootDirection.sub(camera.position).normalize() );
+				shootDirection.x = ray.direction.x;
+				shootDirection.y = ray.direction.y;
+				shootDirection.z = ray.direction.z;
+
+				sphereBody.velocity.set( shootDirection.x * shootVelo,
+										shootDirection.y * shootVelo,
+										shootDirection.z * shootVelo);
+
+				var x = camera.position.x;
+				var y = camera.position.y;
+				var z = camera.position.z;
+
+				// Move the ball outside the player sphere
+				x += shootDirection.x * ( sphereShape.radius );
+				y += shootDirection.y * ( sphereShape.radius );
+				z += shootDirection.z * ( sphereShape.radius );
+				sphereBody.position.set(x,y,z);
+
+				sphereBody.addShape( sphereShape );
+				sphereBody.linearDampling = dampling;
+				demo.world.addBody( sphereBody );
+				demo.addVisual( sphereBody );
+			}
+
+			function onWindowResize() {
+				worker.postMessage( { canvasWidth: window.innerWidth, canvasHeight: window.innerHeight });
+			}
+
+			window.addEventListener("click",function(e){
+
+			   // shootBall();
+			});
+			
+		</script>
+	</body>
+</html>

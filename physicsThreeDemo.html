@@ -1,0 +1,496 @@
+<!--
+To change this template, choose Tools | Templates
+and open the template in the editor.
+-->
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Ellis's physics three.js demo</title>
+		<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	</head>
+	<body>
+	<canvas id="c" width="640" height="640"></canvas>
+	<style type="text/css">
+		* {
+			margin:0;
+			padding:0;
+		}
+		body {
+			overflow: hidden;
+			font-family: Monospace;
+		}
+	</style>
+		<script src="lib/cannon.min.js"></script>
+		<script src="lib/three.js"></script>
+		<script src="lib/threejs/TrackballControls.js"></script>
+		<script src="js/threejs/VREffect.js"></script>
+		<script src="js/threejs//TGALoader.js"></script>
+		<script src="lib/stats.min.js"></script>
+		<script src="lib/dat.gui.min.js"></script>
+		<script src="js/gui.js"></script>
+		<script src="js/demoConfig.js"></script>
+		<script type="text/javascript">
+			var scene;
+			var camera;
+			var renderer;
+			var size = 1;
+			var dampling = 0.01;
+			var ballMass = 10;
+			var sphereShape;
+			var ballMaterial;
+			var world;
+			var controls;
+			var dt = 1/60;
+			var bShowBoundary = false;
+			var visuals = [];
+			var bodies = [];
+			var vrHMD, vrPosSensor;
+			var vrDeviceEffect;
+			var bFullScreen = false, fKeyCode = 70;
+			var stats = null;
+			var workerConfig = null;
+			var lastRenderMode = WorkerConfig.GENERAL_MODE;
+			var lastNumOfBalls = 0;
+
+			init();
+			animate();
+
+			function init() {
+
+				var canvas = document.getElementById('c');
+				canvas.width = window.innerWidth;
+				canvas.height = window.innerHeight;
+				renderer = new THREE.WebGLRenderer( { canvas: canvas } );
+				renderer.setClearColor(0x000000, 1.0);
+				renderer.autoClear = false;
+				renderer.shadowMapEnabled = true;
+				renderer.shadowMapSoft = true;
+				scene = new THREE.Scene();
+				camera = new THREE.PerspectiveCamera(30, canvas.width / canvas.height, 0.5, 10000);
+				camera.target = new THREE.Vector3(0, 0, 0);
+				camera.position.set(0, 30, 170);
+
+				// init stats       
+				stats = new Stats();
+				stats.domElement.style.position = 'absolute';
+				stats.domElement.style.top = '0px';
+				document.body.appendChild(stats.domElement);
+
+				workerConfig = new WorkerConfig();
+				workerConfig.adjustBall = generateBalls;
+				initWorkerGUI(workerConfig);
+
+				// Controls
+				controls = new THREE.TrackballControls(camera, renderer.domElement);
+				controls.rotateSpeed = 1.0;
+				controls.zoomSpeed = 1.2;
+				controls.panSpeed = 0.8;
+				controls.noZoom = false;
+				controls.noPan = false;
+				controls.staticMoving = true;
+				controls.dynamicDampingFactor = 0.3;
+
+				world = new CANNON.World();
+				world.broadphase = new CANNON.NaiveBroadphase();
+				world.gravity.set(0,-10,0);
+				world.solver.tolerance = 0.001;
+
+				// VR setup
+				vrDeviceEffect = new THREE.VREffect(renderer);
+
+				var light, materials;
+				scene.add( new THREE.AmbientLight(0x222222) );
+
+				light = new THREE.DirectionalLight(0xffffff, 0.8);
+				var d = 50;
+
+				light.position.set( d, d, d );
+				light.castShadow = true;
+				//light.shadowCameraVisible = true;
+				light.shadowCameraLeft = -d;
+				light.shadowCameraRight = d;
+				light.shadowCameraTop = d;
+				light.shadowCameraBottom = -d;
+				light.shadowCameraFar = 3*d;
+				light.shadowCameraNear = d;
+				light.shadowDarkness = 0.5;
+
+				var SHADOW_MAP_WIDTH = 512;
+				var SHADOW_MAP_HEIGHT = 512;
+
+				light.shadowMapBias = 0.0039;
+				light.shadowMapDarkness = 0.5;
+				light.shadowMapWidth = SHADOW_MAP_WIDTH;
+				light.shadowMapHeight = SHADOW_MAP_HEIGHT;
+
+				scene.add( light );
+
+				var materialColor = 0x55ff55;
+				var solidMaterial = new THREE.MeshLambertMaterial( { color: materialColor } );
+		
+				// Cannon physics material
+				var stone = new CANNON.Material('stone');
+				var stone_stone = new CANNON.ContactMaterial(stone, stone, {
+				  friction: 0.3,
+				  restitution: 0.2
+				});
+				world.addContactMaterial(stone_stone);
+
+				// ground plane
+				groundMaterial = new CANNON.Material();
+				var groundShape = new CANNON.Plane();
+				var groundBody = new CANNON.Body( { mass: 0, material: groundMaterial } );
+				groundBody.addShape(groundShape);
+				groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI/2);
+				groundBody.position.set(0, -20, 0);
+				world.addBody(groundBody);
+				
+				var geometry = new THREE.PlaneGeometry(10, 10, 4, 4);
+				var ground = new THREE.Mesh( geometry, solidMaterial );
+				ground.scale.set(10, 10, 10);
+				ground.position.set(0, -20, 0);
+				ground.quaternion.setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/2);
+				ground.castShadow = true;
+				ground.receiveShadow = true;
+				scene.add( ground );
+
+				// plane -x
+				if (bShowBoundary) {
+					var geometry = new THREE.PlaneGeometry(10, 10, 4, 4);
+					var mesh = new THREE.Object3D();
+					var ground = new THREE.Mesh( geometry, solidMaterial );
+					ground.scale.set(10, 10, 10);
+					ground.quaternion.setFromAxisAngle( new THREE.Vector3(0, 1, 0), Math.PI/2 );
+					ground.position.set(-30, 0, 0);
+					scene.add( ground );	
+				}
+				
+				var planeShapeXmin = new CANNON.Plane();
+				var planeXmin = new CANNON.Body({ mass: 0, material: stone });
+				planeXmin.addShape(planeShapeXmin);
+				planeXmin.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), Math.PI/2);
+				planeXmin.position.set(-30, 0, 0);
+				world.addBody(planeXmin);
+
+				// Plane +x
+				if (bShowBoundary) {
+					var geometry = new THREE.PlaneGeometry(10, 10, 4, 4);
+					var ground = new THREE.Mesh( geometry, solidMaterial );
+					ground.scale.set(10, 10, 10);
+					ground.quaternion.setFromAxisAngle( new THREE.Vector3(0,1,0), -Math.PI/2 );
+					ground.position.set(30, 0, 0);
+					ground.castShadow = true;
+					ground.receiveShadow = true;
+					scene.add( ground );
+				}
+
+				var planeShapeXmax = new CANNON.Plane();
+				var planeXmax = new CANNON.Body({ mass: 0, material: stone });
+				planeXmax.addShape(planeShapeXmax);
+				planeXmax.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0),-Math.PI/2);
+				planeXmax.position.set(30,0,0);
+				world.addBody(planeXmax);
+
+				// Plane +y
+				if (bShowBoundary) {
+					var geometry = new THREE.PlaneGeometry(10, 10, 4, 4);
+					var ground = new THREE.Mesh( geometry, solidMaterial );
+					ground.scale.set(10, 10, 10);
+					ground.quaternion.setFromAxisAngle( new THREE.Vector3(1,0,0), Math.PI/2 );
+					ground.position.set(0, 40, 0);
+					ground.castShadow = true;
+					ground.receiveShadow = true;
+					scene.add( ground );
+				}				
+
+				var planeShapeYmax = new CANNON.Plane();
+				var planeYmax = new CANNON.Body({ mass: 0, material: stone });
+				planeYmax.addShape(planeShapeYmax);
+				planeYmax.quaternion.setFromAxisAngle(new CANNON.Vec3(1,0,0), Math.PI/2);
+				planeYmax.position.set(0,40,0);
+				world.addBody(planeYmax);
+
+				// Plane -z
+				var geometry = new THREE.PlaneGeometry(10, 10, 4, 4);
+				var ground = new THREE.Mesh( geometry, solidMaterial );
+				ground.scale.set(10, 10, 10);
+				ground.position.set(0, 0, -20);
+				ground.castShadow = true;
+				ground.receiveShadow = true;
+				scene.add( ground );
+
+				var planeShapeZmin = new CANNON.Plane();
+				var planeZmin = new CANNON.Body({ mass: 0, material: stone });
+				planeZmin.addShape(planeShapeZmin);
+				planeZmin.position.set(0,0,-20);
+				world.addBody(planeZmin);
+
+				// Plane +z
+				var planeShapeZmax = new CANNON.Plane();
+				var planeZmax = new CANNON.Body({ mass: 0, material: stone });
+				planeZmax.addShape(planeShapeZmax);
+				planeZmax.quaternion.setFromAxisAngle(new CANNON.Vec3(1,0,0),-Math.PI);
+				planeZmax.position.set(0,0,20);
+				world.addBody(planeZmax);
+
+				var radius = 1;
+				var size = radius;
+
+				sphereShape = new CANNON.Sphere(size);
+				ballMaterial = new CANNON.Material();
+
+				generateBalls(workerConfig.getNumOfBall());
+				// Create contact material behaviour
+				var ballGroundContact = new CANNON.ContactMaterial( groundMaterial, ballMaterial, { friction: 0.3, restitution: 4 } );
+				world.addContactMaterial(ballGroundContact);
+
+				var ballballContact = new CANNON.ContactMaterial( ballMaterial, ballMaterial, { friction: 0.0, restitution: 1 } );
+				world.addContactMaterial(ballGroundContact);
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				document.addEventListener( 'keydown', onKeyDown, false);
+				document.addEventListener( 'webkitfullscreenchange mozfullscreenchange fullscreenchange MSFullscreenChange', function( event ) {
+					onFullscreenChanged( event );
+				});
+			}
+
+			window.addEventListener("load", function() {
+				if (navigator.getVRDevices) {
+					navigator.getVRDevices().then(vrDeviceCallback);
+				} else if (navigator.mozGetVRDevices) {
+					navigator.mozGetVRDevices(vrDeviceCallback);
+				}
+			}, false);
+
+			function onKeyDown(event) {
+				var key = event.keyCode || event.which;
+
+				if (key == fKeyCode) {
+					triggerFullscreen();
+				}
+			}
+
+			function triggerFullscreen() {
+				bFullScreen = !bFullScreen;
+
+				if ( vrPosSensor && bFullScreen ) {
+					vrDeviceEffect.setFullScreen( bFullScreen );
+					return;
+				}
+
+				 // toggle fullscreen
+				if ( !document.fullscreenElement
+					&& !document.mozFullScreenElement 
+					&& !document.webkitFullscreenElement 
+					&& !document.msFullscreenElement ) {  // current working methods
+
+					if ( document.documentElement.requestFullscreen ) {
+						document.documentElement.requestFullscreen();
+					} else if ( document.documentElement.msRequestFullscreen ) {
+						document.documentElement.msRequestFullscreen();
+					} else if ( document.documentElement.mozRequestFullScreen ) {
+						document.documentElement.mozRequestFullScreen();
+					} else if ( document.documentElement.webkitRequestFullscreen ) {
+						document.documentElement.webkitRequestFullscreen( Element.ALLOW_KEYBOARD_INPUT );
+					}
+				} else {
+					if (document.exitFullscreen) {
+					  document.exitFullscreen();
+					} else if (document.msExitFullscreen) {
+					  document.msExitFullscreen();
+					} else if (document.mozCancelFullScreen) {
+					  document.mozCancelFullScreen();
+					} else if (document.webkitExitFullscreen) {
+					  document.webkitExitFullscreen();
+					}
+
+					onWindowResize();
+				}
+			}
+
+			function vrDeviceCallback(devices) {
+
+				if (devices.length) {
+					// swal({ title: "VR device connected!",   text: "I will close in 3 seconds.",  
+					// type: "success", timer: 3000,   showConfirmButton: false });
+				} else {
+					return;
+				}
+
+				for (var i = 0; i < devices.length; ++i) {
+
+					if (devices[i] instanceof HMDVRDevice) {
+					   vrHMD = devices[i];
+					}	
+
+					if (vrHMD && devices[i] instanceof PositionSensorVRDevice
+						&& devices[i].hardwareUnitId == vrHMD.hardwareUnitId) {
+					   vrPosSensor = devices[i];
+						// We just want to get the first VR device.
+					   break;
+					}
+				}
+			}
+
+			function animate( timestamp ) {
+				world.step(dt); // Update the phyics world.
+				updateVisuals();
+				controls.update();
+
+				var renderMode = workerConfig.getRenderMode();
+					
+				if (lastRenderMode != renderMode) {
+					onWindowResize();
+					lastRenderMode = renderMode;
+				}
+
+				if ( renderMode == WorkerConfig.GENERAL_MODE ) {
+					renderer.render( scene, camera );
+				} else if ( renderMode == WorkerConfig.VRDEVICE_MODE ) {
+					vrDeviceEffect.render( scene, camera );
+				} else {
+					console.error( "Not define this render mode: " + renderMode );
+				}
+
+				// For WebVR sensor
+				if ( vrPosSensor ) {
+				   var state = vrPosSensor.getState();
+
+					if ( state.hasOrientation ) {
+						camera.quaternion.set(
+							state.orientation.x, 
+							state.orientation.y, 
+							state.orientation.z, 
+							state.orientation.w);
+					}
+
+					if ( state.hasPosition ) {
+
+					}
+				} else {
+					renderer.render(scene, camera);
+				}
+
+				stats.update();
+				requestAnimationFrame(animate);
+			}
+		   
+			function updateVisuals() {
+				var lens = bodies.length;
+
+				// Read position data into visuals
+				for (var i=0; i<lens; i++){
+					var b = bodies[i], visual = visuals[i];
+					visual.position.copy(b.position);
+					if (b.quaternion){
+						visual.quaternion.copy(b.quaternion);
+					}
+				}
+			}
+
+			function generateBalls(num) {
+				var loader = new THREE.TGALoader();
+				var texture = loader.load( 'images/brick_bump.tga' );
+				var solidMaterial = new THREE.MeshLambertMaterial( { map: texture } );
+				var radius = 1;
+				var size = radius;
+
+				for ( var i = 0; i < lastNumOfBalls; ++i ) {
+					scene.remove( visuals[i] );
+					world.remove( bodies[i] );
+				}
+				
+				visuals = [];
+				bodies = [];
+
+				for ( var i = 0; i < num; ++i ) {
+
+					var randX = (Math.random() - 0.5) * 20;
+					var randY = (Math.random() - 0.5) * size;
+					var randZ = Math.random() * 20;
+					var sphere_geometry = new THREE.SphereGeometry(radius, 8, 8);
+					mesh = new THREE.Mesh(sphere_geometry, solidMaterial);
+					mesh.position.set(randX, randY, randZ);
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+
+					scene.add( mesh );
+					visuals.push( mesh );
+
+					var ballBody = new CANNON.Body( {
+						mass: ballMass,
+						material: ballMaterial,
+						position: new CANNON.Vec3(randX, randZ)
+					});
+				
+					ballBody.addShape(sphereShape);
+					ballBody.linearDampling = dampling;
+					world.addBody( ballBody );
+					bodies.push( ballBody );
+				}
+
+				lastNumOfBalls = num;
+			}
+
+			function shootBall() {
+
+				var shootVelo = 15;
+				var ballHeight = 10;
+				var shootDirection = new THREE.Vector3();
+				var projector = new THREE.Projector();
+
+				shootDirection.set( 0, 0, 1 );
+				camera = demo.getCamera();
+				var mat = new CANNON.Material();
+				projector.unprojectVector(shootDirection, camera);
+				var sphereBody = new CANNON.Body( {
+					mass: ballMass,
+					material: mat,
+					position: new CANNON.Vec3( 3 * size, size, ballHeight )
+				});
+				var mat_mat = new CANNON.ContactMaterial(mat, mat, {
+				  friction: 0.5,
+				  restitution: 5
+				});
+				var mat_ground = new CANNON.ContactMaterial(groundMaterial, mat, { friction: 0.0, restitution: 5 });
+				demo.world.addContactMaterial(mat_ground);
+
+				var ray = new THREE.Ray(camera.position, shootDirection.sub(camera.position).normalize() );
+				shootDirection.x = ray.direction.x;
+				shootDirection.y = ray.direction.y;
+				shootDirection.z = ray.direction.z;
+
+				sphereBody.velocity.set( shootDirection.x * shootVelo,
+										shootDirection.y * shootVelo,
+										shootDirection.z * shootVelo);
+
+				var x = camera.position.x;
+				var y = camera.position.y;
+				var z = camera.position.z;
+
+				// Move the ball outside the player sphere
+				x += shootDirection.x * ( sphereShape.radius );
+				y += shootDirection.y * ( sphereShape.radius );
+				z += shootDirection.z * ( sphereShape.radius );
+				sphereBody.position.set(x,y,z);
+
+				sphereBody.addShape( sphereShape );
+				sphereBody.linearDampling = dampling;
+				demo.world.addBody( sphereBody );
+				demo.addVisual( sphereBody );
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			window.addEventListener("click",function(e){
+			   // shootBall();
+			});
+			
+		</script>
+	</body>
+</html>

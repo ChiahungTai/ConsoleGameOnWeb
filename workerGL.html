@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+
+<!-- 
+Worker on WebGL
+author: daoshengmu, http://dsmu.me
+date: 08/07/2015
+-->
+
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <link href="css/style.css" rel="stylesheet">
+        <title>WebGL for worker Demo</title>
+    </head>
+    <body>
+        <div id="info">
+            Worker for WebVr demo. The panorama image is from <a href="http://www.lemis.com/grog/photos/Photos.php?dirdate=20120601" target="_blank">Greg</a>
+        </div>
+        <div id="container"></div>
+        <canvas id="c" width="64" height="64"></canvas>
+        <script id="shader-vs" type="x-shader/x-vertex">
+            attribute vec3 POSITION;
+            attribute vec4 COLOR;
+            attribute vec3 NORMAL;
+            
+            varying vec4 outCOLOR0;
+            varying vec3 outNORMAL;
+            
+            uniform mat4 uMVMatrix;
+            uniform mat4 uPMatrix;
+            
+            void main(void) {
+                gl_Position = uPMatrix * uMVMatrix * vec4(POSITION, 1.0);
+                
+                outCOLOR0 = COLOR;
+                outNORMAL = (uMVMatrix * vec4( NORMAL, 0.0 )).xyz;
+            }
+        </script>
+        <script id="shader-fs" type="x-shader/x-fragment">
+            precision mediump float;
+            
+            varying vec4 outCOLOR0;
+            varying vec3 outNORMAL;
+            uniform vec4 matDiffuse;
+            uniform vec4 lightDir;
+            uniform vec4 lightColor;
+            
+            void main(void) {
+                vec4 pixelColor;
+                
+                pixelColor.w = matDiffuse.w * outCOLOR0.w;
+                vec3 vNormal = normalize( outNORMAL );
+                float lightAmount = dot( vNormal, vec3(lightDir) );  
+                
+                pixelColor.xyz = matDiffuse.xyz * lightColor.xyz * lightAmount;
+                gl_FragColor = pixelColor;
+            }
+        </script>
+        <script type="text/javascript">
+
+            initWorker();
+
+            function initWorker() {
+
+                var canvas = document.getElementById('c');
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                var proxy = canvas.transferControlToOffscreen();   // new interface added by offscreencanvas.
+                var vs = document.getElementById("shader-vs");
+                var ps = document.getElementById("shader-fs");
+
+                if ( window.Worker ) { 
+
+                    var worker = new Worker("js/gl_worker_maximus.js");
+                    
+                    worker.onmessage = function( evt ) {
+                        console.log('Message received from worker ' + evt.data );
+                    };
+
+                    worker.postMessage( { test: 'webgl_offscreen', canvas: proxy,
+                        vertexShader: vs.innerHTML, pixelShader: ps.innerHTML }, [proxy]);
+                
+                }
+
+            }
+
+            function onWindowResize() {
+
+               console.log("resize...");
+            }
+
+	</script>	
+    </body>
+</html>
